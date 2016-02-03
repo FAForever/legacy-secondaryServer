@@ -1,25 +1,52 @@
-from functools import reduce
+#-------------------------------------------------------------------------------
+# Copyright (c) 2014 Gael Honorez.
+# All rights reserved. This program and the accompanying materials
+# are made available under the terms of the GNU Public License v3.0
+# which accompanies this distribution, and is available at
+# http://www.gnu.org/licenses/gpl.html
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#-------------------------------------------------------------------------------
 
-from PySide.QtCore import QObject
+
+from PySide.QtCore import QThread, QObject, SIGNAL, SLOT, QReadWriteLock, QWriteLocker, QReadLocker
 from PySide.QtCore import QByteArray, QDataStream, QIODevice, QFile, QCoreApplication
-from PySide import QtNetwork
+from PySide.QtNetwork import QTcpServer, QTcpSocket, QAbstractSocket, QHostInfo
+  
+from PySide import QtCore, QtGui, QtNetwork, QtSql
 from PySide.QtSql import *
-import config
-from config import Config
-import server.db as db
 
-import asyncio
+from configobj import ConfigObj
+config = ConfigObj("/etc/faforever/faforever.conf")
+
+from time import time as curtime
+from types import *
+import math
+import sys
+import zipfile
 import os
+import shutil
+import uuid
+import random
 import logging
+import hashlib
 import json
-import urllib.request, urllib.error, urllib.parse
-import datetime
+import urllib2
+import time, datetime
 
-class replayServerThread(QObject):  # pragma: no cover
-    """
+class replayServerThread(QObject):
+    '''
     FA server thread spawned upon every incoming connection to
     prevent collisions.
-    """
+    '''
     
     
     def __init__(self, socketId, parent=None):
@@ -27,11 +54,12 @@ class replayServerThread(QObject):  # pragma: no cover
 
         self.logger = logging.getLogger(__name__)
 
+        self.season = "ladder_season_5"
         self.socket = QtNetwork.QTcpSocket(self)
         self.socket.setSocketDescriptor(socketId)
         self.parent = parent
         
-        if self.socket.state() == 3 and self.socket.isValid():
+        if self.socket.state() == 3 and self.socket.isValid() :
             
             self.nextBlockSize = 0
     
@@ -42,6 +70,9 @@ class replayServerThread(QObject):  # pragma: no cover
             self.socket.error.connect(self.displayError)
             self.parent.db.open()   
 
+        
+
+            
     def lock(self):
         pass
 #        query = QSqlQuery(self.parent.db)
@@ -53,50 +84,84 @@ class replayServerThread(QObject):  # pragma: no cover
 #        query = QSqlQuery(self.parent.db)
 #        query.prepare("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ ;")
 #        query.exec_()        
+            
 
-    @asyncio.coroutine
     def command_modvault_search(self, message):
-        """that function is used by the mod vault to search for mods!"""
+        '''that function is used by the mod vault to search for mods!'''
 
         typemod = message["typemod"]
         search = message["search"]
         
         descriptionField =  ".*[[:space:]]"+search+"[[:space:]].*"
         nameField = "%" + search + "%"
-
-        with (yield from db.db_pool) as conn:
-            cursor = yield from conn.cursor()
-            queryStr = "SELECT `uid`, `t`.`name`,`version`,`author`,`ui`,`date`,`downloads`,`likes`,`played`,`description`,`filename`,`icon` \
-                        FROM     (     SELECT `name`, MAX(`version`) AS max_version \
-                                        FROM `table_mod`   \
-                                        WHERE (`name` LIKE %s OR `description` REGEXP %s OR `author` LIKE %s)"
-
-            if typemod != 2:
-                queryStr += "AND `ui` = " + typemod
-
-            queryStr += "GROUP BY `name` \
-                         ORDER BY `id` DESC   \
-                         LIMIT 0,100 \
+        
+        query = QSqlQuery(self.parent.db)
+        queryStr = "SELECT `id`,`uid`, `t`.`name`,`version`,`author`,`ui`,`big`,`small`,`date`,`downloads`,`likes`,`played`,`description`,`filename`,`icon` \
+                    FROM     (     SELECT `name`, MAX(`version`) AS max_version \
+                                    FROM `table_mod`   \
+                                    WHERE (`name` LIKE ? OR `description` REGEXP ? OR `author` LIKE ?)\
+                                    GROUP BY `name` \
+                                    ORDER BY `id` DESC   \
+                                    LIMIT 0,100 \
                             ) AS m \
                     INNER JOIN `table_mod` AS t \
                         ON t.`name`= m.`name` \
-                        AND t.`version`= m.max_version;"
-
-            modList = []
-            yield from cursor.execute(queryStr, nameField, descriptionField, nameField)
-            for i in range(0, cursor.rowcount):
-                uid, name, version, author, ui, date, downloads, likes, played, description, filename, icon = yield from cursor.fetchone()
-                date = date.toTime_t()
-                link = Config['content_url'] + "vault/" + filename
-
+                        AND t.`version`= m.max_version;" 
+        self.logger.debug(queryStr)
+        if typemod != 2:
+            queryStr = "SELECT `id`,`uid`,`t`.`name`,`version`,`author`,`ui`,`big`,`small`,`date`,`downloads`,`likes`,`played`,`description`,`filename`,`icon` \
+                        FROM     (     SELECT `name`, MAX(`version`) AS max_version \
+                                        FROM `table_mod`   \
+                                        WHERE (`name` LIKE ? OR `description` REGEXP ? OR `author` LIKE ?) AND `ui` = ? \
+                                        GROUP BY `name` \
+                                        ORDER BY `id` DESC   \
+                                        LIMIT 0,100 \
+                                ) AS m \
+                        INNER JOIN `table_mod` AS t \
+                            ON t.`name`= m.`name` \
+                            AND t.`version`= m.max_version;"         
+        
+        if not query.prepare(queryStr):
+            self.logger.debug(query.lastQuery())
+            self.logger.debug(query.lastError())
+            
+        query.addBindValue(nameField)
+        query.addBindValue(descriptionField)
+        query.addBindValue(nameField)
+        if typemod != 2:
+            query.addBindValue(typemod)
+        
+        modList = []
+        
+        query.exec_()
+        if query.size() != 0:
+            while query.next():
+                uid = str(query.value(1))
+                name = str(query.value(2))
+                version = int(query.value(3))
+                author = str(query.value(4))
+                isuimod = int(query.value(5))
+                isbigmod = int(query.value(6))
+                issmallmod = int(query.value(7))
+                date = query.value(8).toTime_t()                              
+                downloads = int(query.value(9))
+                likes = int(query.value(10))
+                played = int(query.value(11))
+                description = str(query.value(12))
+                comments = []
+                bugreports = []
+                link = config['global']['content_url'] + "vault/" + str(query.value(13))
+                icon = str(query.value(14))
                 thumbstr = ""
                 if icon != "":
-                    thumbstr = Config['content_url'] + "vault/mods_thumbs/" + urllib.parse.quote(icon)
+                    thumbstr = config['global']['content_url'] + "vault/mods_thumbs/" + urllib2.quote(icon)
                 
-                modList.append(dict(thumbnail=thumbstr,link=link,bugreports=[],comments=[],description=description,played=played,likes=likes,downloads=downloads,date=date, uid=uid, name=name, version=version, author=author,ui=ui))
+                modList.append(dict(thumbnail=thumbstr,link=link,bugreports=bugreports,comments=comments,description=description,played=played,likes=likes,downloads=downloads,date=date, uid=uid, name=name, version=version, author=author,ui=isuimod,big=isbigmod,small=issmallmod))
 
         out = dict(command="modvault_list_info", modList = modList)
         self.sendJSON(out)
+                  
+
 
     def command_coop_stats(self, message):
         missionuid = message["mission"]
@@ -148,38 +213,56 @@ class replayServerThread(QObject):  # pragma: no cover
                 if not uid in missions:
                     missions[uid] = {}
                     missions[uid]= dict(rank = rank, players=[], time= query.value(2).toString("HH:mm:ss"), gameuid = query.value(1), secondary = query.value(3))
-                    rank += 1
+                    rank = rank + 1
                 
                 players = missions[uid]["players"]
                 players.append(str(query.value(0)))
                 
-        missionsToSend = list(range(len(missions)))
+        missionsToSend = range(len(missions))
         for uid in missions:
             
             missionsToSend[missions[uid]["rank"]] = missions[uid] 
+            
 
         self.sendJSON(dict(command = "coop_leaderboard", table = table, mission = missionuid, leaderboard=missionsToSend))
+    
+    def command_ladder_maps(self, message): 
+        user = message["user"]        
+        query = QSqlQuery(self.parent.db)
+            
+        query.prepare("SELECT ladder_map.`idmap`, table_map.name, filename, ((SELECT idUser FROM  ladder_map_selection WHERE idMap = ladder_map.`idmap` AND idUser = (SELECT id FROM login WHERE login = ?)) is not null)FROM `ladder_map` LEFT JOIN table_map ON `idmap` = table_map.id")            
+        query.addBindValue(user)
+        query.exec_()
+        finalresult = []
+        if query.size() > 0 :
+            while query.next() :
+                selected = False 
+                if query.value(3) != 0:
+                    selected = True
+                finalresult.append(dict(idmap = int(query.value(0)), mapname = query.value(1), maprealname = query.value(2), selected = selected))
 
+            self.sendJSON(dict(command = "ladder_maps", values = finalresult))
+                    
     def command_stats(self, message):
 
         typeState = message['type']
         
-        if typeState == "divisions":
+        if typeState == "divisions" :
             league = message['league']
             query = QSqlQuery(self.parent.db)
             query.prepare("SELECT name FROM ladder_division WHERE `league` = ?")
             query.addBindValue(league)
             query.exec_()
             
-            if query.size() > 0:
+            if query.size() > 0 :
                 num = 0
                 finalresult = []
-                while query.next():
+                while query.next() :
                     finalresult.append((dict(number=num, division = str(query.value(0)), league = league)))
-                    num += 1
+                    num = num + 1
                 self.sendJSON(dict(command = "stats", type = "divisions", league=league, values = finalresult))
 
-        elif typeState == "division_table":
+        elif typeState == "division_table" :
             league = message['league']
             division = message['division']
             query = QSqlQuery(self.parent.db)
@@ -188,7 +271,7 @@ class replayServerThread(QObject):  # pragma: no cover
             
             query.addBindValue((5*(league-1)) +(division+1))
             query.exec_()
-            if query.size() > 0:
+            if query.size() > 0 :
                 query.first()
                 limit = int(query.value(0))
             
@@ -206,45 +289,45 @@ class replayServerThread(QObject):  # pragma: no cover
             
             limitBasse = limit - range
             
-            query.prepare("SELECT login, score FROM %s JOIN login ON %s.idUser=login.id WHERE league = ? AND score <= ? AND score >= ? ORDER BY score DESC" % (config.LADDER_SEASON, config.LADDER_SEASON))
+            query.prepare("SELECT login, score FROM %s JOIN login ON %s.idUser=login.id WHERE league = ? AND score <= ? AND score >= ? ORDER BY score DESC" % (self.season, self.season))
             query.addBindValue(league)
             query.addBindValue(limit)
             query.addBindValue(limitBasse)
             query.exec_()
             finalresult = []
-            if query.size() > 0:
+            if query.size() > 0 :
                 rank = 1
-                while query.next():
+                while query.next() :
                     score = float(query.value(1))
                     if score !=0:
-                        finalresult.append((dict(rank=rank, name = str(query.value(0)), score = score)))
-                        rank += 1
+                        finalresult.append((dict(rank=rank, name = str(query.value(0)), score = score )))
+                        rank = rank + 1
                 
             self.sendJSON(dict(command = "stats", type = "division_table", division=message['division'], league=message['league'], values = finalresult))
 
 
-        elif typeState == "league_table":
+        elif typeState == "league_table" :
             league = message['league']
             query = QSqlQuery(self.parent.db)
-            query.prepare("SELECT login, score FROM %s JOIN login ON %s.idUser=login.id  WHERE league = ? ORDER BY score DESC" % (config.LADDER_SEASON, config.LADDER_SEASON))
+            query.prepare("SELECT login, score FROM %s JOIN login ON %s.idUser=login.id  WHERE league = ? ORDER BY score DESC" % (self.season, self.season))
             query.addBindValue(league)
             query.exec_()
 
-            if query.size() > 0:
+            if query.size() > 0 :
                 finalresult = []
                 rank = 1
-                while query.next():
+                while query.next() :
                     score = float(query.value(1))
                     if score != 0:
-                        finalresult.append((dict(rank=rank, name = str(query.value(0)), score = score)))
-                        rank += 1
+                        finalresult.append((dict(rank=rank, name = str(query.value(0)), score = score )))
+                        rank = rank + 1
   
                 self.sendJSON(dict(command = "stats", type = "league_table", league=league, values = finalresult))
             else:
                 self.sendJSON(dict(command = "stats", type = "league_table", league=league, values = []))
 
 
-        elif typeState == "global_90_days":
+        elif typeState == "global_90_days" :
             name = message['player']
             query = QSqlQuery(self.parent.db)
                 
@@ -252,20 +335,20 @@ class replayServerThread(QObject):  # pragma: no cover
             query.addBindValue(name)
             query.exec_()
 
-            if query.size() > 0:
+            if query.size() > 0 :
                 finalresult = []
-                while query.next():
-                    if query.value(1) != 0 and query.value(2) != 0: 
+                while query.next() :
+                    if query.value(1) != 0 and query.value(2) != 0 : 
                         date = query.value(0).toString("dd.MM.yyyy")
                         time = query.value(0).toString("hh:mm")
-                        if date == "" or time == "": 
+                        if date == "" or time == "" : 
                             continue                        
                         finalresult.append((dict(date=date, time = time, mean=query.value(1), dev=query.value(2))))
                    
-                if len(finalresult) > 0:
+                if len(finalresult) > 0 :
                     self.sendJSON(dict(command = "stats", type = "global_90_days", player=name, values = finalresult))
                     
-        elif typeState == "global_forever":
+        elif typeState == "global_forever" :
             name = message['player']
             query = QSqlQuery(self.parent.db)
                 
@@ -273,28 +356,28 @@ class replayServerThread(QObject):  # pragma: no cover
             query.addBindValue(name)
             query.exec_()
 
-            if query.size() > 0:
+            if query.size() > 0 :
                 finalresult = []
-                while query.next():
-                    if query.value(1) != 0 and query.value(2) != 0:
+                while query.next() :
+                    if query.value(1) != 0 and query.value(2) != 0 :
                         date = query.value(0).toString("dd.MM.yyyy")
                         time = query.value(0).toString("hh:mm")
-                        if date == "" or time == "": 
+                        if date == "" or time == "" : 
                             continue
                         finalresult.append((dict(date=date, time = time, mean=query.value(1), dev=query.value(2))))
                    
-                if len(finalresult) > 0:
+                if len(finalresult) > 0 :
                     self.sendJSON(dict(command = "stats", type = "global_forever", player=name, values = finalresult))
               
-        elif typeState == "ladder_maps":
+        elif typeState == "ladder_maps" :
             query = QSqlQuery(self.parent.db)
                 
             query.prepare("SELECT `idmap` , table_map.name, filename FROM `ladder_map` LEFT JOIN table_map ON `idmap` = table_map.id")
             query.exec_()
             finalresult = []
-            if query.size() > 0:
+            if query.size() > 0 :
                 
-                while query.next():
+                while query.next() :  
                     finalresult.append(dict(idmap = int(query.value(0)), mapname = query.value(1), maprealname = query.value(2)))
                 
                 
@@ -307,13 +390,14 @@ class replayServerThread(QObject):  # pragma: no cover
             query.addBindValue(str(lastSeason))
             query.exec_()
             
-            if query.size() > 0:
+            if query.size() > 0 :
                 query.first()
                 self.sendJSON(dict(command = "stats", type = "ladder_maps", values = finalresult, gamesplayed = int(query.value(0))))
             
-        elif typeState == "ladder_map_stat":
+        elif typeState == "ladder_map_stat" :
             idmap = message["mapid"]
 
+            
             # get correct time : last season !
             lastSeason = self.getLastSeason()
             
@@ -344,7 +428,7 @@ class replayServerThread(QObject):  # pragma: no cover
             query.addBindValue(idmap)
             query.exec_()
             #self.logger.debug("map " + str(idmap))
-            if query.size() > 0:
+            if query.size() > 0 :
                 query.first()
                 stats["duration_max"] = int(query.value(0))
                 stats["duration_avg"] = int(query.value(1))
@@ -354,7 +438,7 @@ class replayServerThread(QObject):  # pragma: no cover
             query.addBindValue(idmap)
             
             query.exec_()
-            if query.size() > 0:
+            if query.size() > 0 :
                 query.first()
                 stats["game_played"] = int(query.value(0))
                 
@@ -363,25 +447,25 @@ class replayServerThread(QObject):  # pragma: no cover
             query.addBindValue(str(lastSeason))
             query.addBindValue(idmap)
             query.exec_()
-            if query.size() > 0:
+            if query.size() > 0 :
                 
-                while query.next():
+                while query.next() :
 
                     gameId = int(query.value(0))
                     faction = int(query.value(1))
-                    if faction == 1:
-                        stats["uef_total"] += 1
-                    elif faction == 3:
-                        stats["cybran_total"] += 1
-                    elif faction == 2:
-                        stats["aeon_total"] += 1
-                    elif faction == 4:
-                        stats["sera_total"] += 1
+                    if faction == 1 :
+                        stats["uef_total"] = stats["uef_total"] + 1 
+                    elif faction == 3 :
+                        stats["cybran_total"] = stats["cybran_total"] + 1
+                    elif faction == 2 :
+                        stats["aeon_total"] = stats["aeon_total"] + 1
+                    elif faction == 4 :
+                        stats["sera_total"] = stats["sera_total"] + 1
                             
                     score = int(query.value(2))
 
                     player = "player2"
-                    if not gameId in games:
+                    if not gameId in games :
                         games[gameId] = {}
                         player = "player1"
 #                        
@@ -389,42 +473,42 @@ class replayServerThread(QObject):  # pragma: no cover
                     games[gameId][player]["faction"] = faction
                     games[gameId][player]["score"] = score
 
-            for game in games:
-                if "player2" in  games[game]:
-                    if games[game]["player1"]["score"] == games[game]["player2"]["score"]:
-                        stats["draws"] += 1
-                    else:
+            for game in games :
+                if "player2" in  games[game] :
+                    if games[game]["player1"]["score"] == games[game]["player2"]["score"] :
+                        stats["draws"] = stats["draws"] + 1
+                    else :
                         faction = 0
                         otherfaction = 0
-                        if games[game]["player1"]["score"] >  games[game]["player2"]["score"]:
+                        if games[game]["player1"]["score"] >  games[game]["player2"]["score"] :
                             faction = games[game]["player1"]["faction"]
                             otherfaction = games[game]["player2"]["faction"]
-                        else:
+                        else :
                             faction = games[game]["player2"]["faction"]
                             otherfaction = games[game]["player1"]["faction"]
 
                         
                            
-                        if faction == 1:
-                            if otherfaction == faction:
-                                stats["uef_ignore"] += 1
-                            else:
-                                stats["uef_win"] += 1
-                        elif faction == 3:
-                            if otherfaction == faction:
-                                stats["cybran_ignore"] += 1
-                            else:
-                                stats["cybran_win"] += 1
-                        elif faction == 2:
-                            if otherfaction == faction:
-                                stats["aeon_ignore"] += 1
-                            else:
-                                stats["aeon_win"] += 1
-                        elif faction == 4:
-                            if otherfaction == faction:
-                                stats["sera_ignore"] += 1
-                            else:
-                                stats["sera_win"] += 1
+                        if faction == 1 :
+                            if otherfaction == faction :
+                                stats["uef_ignore"] = stats["uef_ignore"] + 1
+                            else :
+                                stats["uef_win"] = stats["uef_win"] + 1 
+                        elif faction == 3 :
+                            if otherfaction == faction :
+                                stats["cybran_ignore"] = stats["cybran_ignore"] + 1
+                            else :
+                                stats["cybran_win"] = stats["cybran_win"] + 1
+                        elif faction == 2 :
+                            if otherfaction == faction :
+                                stats["aeon_ignore"] = stats["aeon_ignore"] + 1
+                            else :
+                                stats["aeon_win"] = stats["aeon_win"] + 1
+                        elif faction == 4 :
+                            if otherfaction == faction :
+                                stats["sera_ignore"] = stats["sera_ignore"] + 1
+                            else :
+                                stats["sera_win"] = stats["sera_win"] + 1
                        
 
             self.sendJSON(dict(command = "stats", type = "ladder_map_stat", idmap = idmap, values = stats))
@@ -433,23 +517,39 @@ class replayServerThread(QObject):  # pragma: no cover
     def getLastSeason(self):
         now = datetime.date.today()
 
-        if (now.month == 3 and now.day < 21) or now.month < 3:
+        if (now.month == 3 and now.day < 21) or now.month < 3 :
             previous = datetime.datetime(now.year-1, 12, 21)
             
-        elif (now.month == 6 and now.day < 21) or now.month < 6:
+        elif (now.month == 6 and now.day < 21) or now.month < 6 :
     
-            previous = datetime.datetime(now.year, 0o3, 21)
+            previous = datetime.datetime(now.year, 03, 21)
             
-        elif (now.month == 9 and now.day < 21) or now.month < 9:
+        elif (now.month == 9 and now.day < 21) or now.month < 9 :
          
-            previous = datetime.datetime(now.year, 0o6, 21)
+            previous = datetime.datetime(now.year, 06, 21)
             
-        else:
+        else  :
           
             previous = datetime.datetime(now.year, 9, 21)
         
         return previous
 
+    
+    def command_gw_game_info(self, message):
+        gameuid = message["uid"]
+        query = QSqlQuery(self.parent.db)
+        query.setForwardOnly(True)
+        query.prepare("SELECT * FROM galacticwar.reinforcements_replays WHERE uid = ?")
+        query.addBindValue(gameuid)
+        if not query.exec_():
+            self.logger.debug(query.lastQuery())
+        if query.size() > 0:
+            query.first()
+            self.sendJSON(dict(command = "gw_game_info", table = str(query.value(1))))
+        else :
+            self.sendJSON(dict(command = "gw_game_info", table = ""))
+        
+    
     def command_list(self, message):
         query = QSqlQuery(self.parent.db)
         query.setForwardOnly(True)
@@ -466,7 +566,7 @@ class replayServerThread(QObject):  # pragma: no cover
         query.exec_()
         if  query.size() > 0:
             replays = []
-            while query.next():
+            while query.next() :
                 replay = {}
                 replay["id"] = int(query.value(0))
                 replay["name"] = query.value(1)
@@ -493,25 +593,25 @@ class replayServerThread(QObject):  # pragma: no cover
         query = QSqlQuery(self.parent.db)
         query.setForwardOnly(True)
 
-        if mapname != "":
+        if mapname != "" :
             query.prepare("SELECT id FROM `table_map` WHERE LOWER( `name` ) REGEXP ? LIMIT 1")
             mapname = "^" + mapname.lower().replace("*", ".*") +"$"
             query.addBindValue(mapname)
             query.exec_()
-            if query.size() != 0:
+            if query.size() != 0 :
                 query.first()
                 mapUid = int(query.value(0))
-            else:
+            else :
                 return
             
-        if mod != "All":
+        if mod != "All" :
             query.prepare("SELECT id FROM `game_featuredMods` WHERE gamemod = ? LIMIT 1")
             query.addBindValue(mod)
             query.exec_()
-            if query.size() != 0:
+            if query.size() != 0 :
                 query.first()
                 modUid = int(query.value(0))
-            else:
+            else :
                 return
 
         queryStr = "\
@@ -524,18 +624,18 @@ WHERE  (-1 = ? OR game_stats.gameMod = ?) \
 AND (mean - 3*deviation) >= ? \
 AND (-1 = ? OR mapId = ?) \n"
 
-        if player != "":
+        if player != "" :
             query.prepare("SELECT id from login where LOWER(login) REGEXP ?")
             query.addBindValue(player.lower())
             query.exec_()
-            if query.size() > 1:
+            if query.size() > 1 :
                 players = []
                 i = 0
-                while query.next() and i < 100:
+                while query.next() and i < 100 :
                     players.append(query.value(0))
                     i += 1
                 queryStr += "AND game_player_stats.playerId IN ("+reduce(lambda x, y: str(x)+","+str(y), players)+") "
-            elif query.size() == 1:
+            elif query.size() == 1 :
                 query.first()
                 playerId = query.value(0)
                 queryStr += "AND game_player_stats.playerId = " + str(playerId) + "\n"
@@ -554,7 +654,7 @@ AND (-1 = ? OR mapId = ?) \n"
             
         if query.size() > 0:
             replays = []
-            while query.next():
+            while query.next() :
                 replay = {}
                 replay["id"] = int(query.value(0))
                 replay["name"] = query.value(1)
@@ -587,19 +687,19 @@ AND (-1 = ? OR mapId = ?) \n"
         query.exec_()
         if  query.size() > 0:
             players = []
-            while query.next():
+            while query.next() : 
                 player = {}
                 player["name"] = str(query.value(0))   
                 player["faction"] = query.value(1)
                 player["color"] = query.value(2)
                 player["team"] = query.value(3)
                 player["place"] = query.value(4)
-                if query.value(5):
+                if query.value(5) :
                     player["rating"] = max(0, int(round((query.value(5))/100.0)*100)) 
                     
 #                if query.value(6) :
 #                    player["after_rating"] = query.value(6)
-                if query.value(6):
+                if query.value(6) :
                     player["score"] = query.value(6)
     #                    if query.value(8) :
     #                        player["scoreTime"] = query.value(8)
@@ -615,36 +715,36 @@ AND (-1 = ? OR mapId = ?) \n"
 
 
     def readDatas(self):
-        if self.socket is not None:
-            if self.socket.isValid():
+        if self.socket != None :
+            if self.socket.isValid() :
                 ins = QDataStream(self.socket)
                 ins.setVersion(QDataStream.Qt_4_2)
                 loop = 0
-                while not ins.atEnd():
+                while ins.atEnd() == False :
                     QCoreApplication.processEvents()
-                    loop += 1
-                    if self.socket is not None:
-                        if self.socket.isValid():
+                    loop = loop + 1
+                    if self.socket != None :               
+                        if self.socket.isValid() :
                             if self.blockSize == 0:
-                                if self.socket.isValid():
+                                if self.socket.isValid() :
                                     if self.socket.bytesAvailable() < 4:
                                         return
                                     self.blockSize = ins.readUInt32()
-                                else:
+                                else :
                                     return
-                            if self.socket.isValid():
+                            if self.socket.isValid() :
                                 if self.socket.bytesAvailable() < self.blockSize:
                                     bytesReceived = str(self.socket.bytesAvailable())
                                     return
                                 bytesReceived = str(self.socket.bytesAvailable())
-                            else:
+                            else :
                                 return  
                             action = ins.readQString()
                             self.handleAction(action, ins)
                             self.blockSize = 0
-                        else: 
+                        else : 
                             return    
-                    else:
+                    else :
                         return
                 return
 
@@ -652,21 +752,22 @@ AND (-1 = ? OR mapId = ?) \n"
         self.done()
 
     def sendJSON(self, data_dictionary):
-        """
+        '''
         Simply dumps a dictionary into a string and feeds it into the QTCPSocket
-        """
-        try:
+        '''
+        data_string = ""
+        try :
             data_string = json.dumps(data_dictionary)
-        except:
+        except :
 
             return
 
         self.sendReply(data_string)
 
     def receiveJSON(self, data_string, stream):
-        """
+        '''
         A fairly pythonic way to process received strings as JSON messages.
-        """
+        '''
         message = json.loads(data_string)
         cmd = "command_" + message['command']
         self.logger.debug("handling command : " + cmd)
@@ -677,9 +778,9 @@ AND (-1 = ? OR mapId = ?) \n"
             self.unlock()  
 
 
-    def sendReply(self, action, *args, **kwargs):
+    def sendReply(self, action, *args, **kwargs) :
         
-        try:
+        try :
             
             if hasattr(self, "socket"):
 
@@ -691,20 +792,20 @@ AND (-1 = ? OR mapId = ?) \n"
                 stream.writeQString(action)
 
     
-                for arg in args:
-                    if type(arg) is LongType:
+                for arg in args :
+                    if type(arg) is LongType :
                         stream.writeQString(str(arg))
                     if type(arg) is IntType:
                         stream.writeInt(int(arg))
-                    elif type(arg) is StringType:
+                    elif type(arg) is StringType  :
                         stream.writeQString(arg)
-                    elif isinstance(arg, str):                       
+                    elif isinstance(arg, basestring):                       
                         stream.writeQString(arg) 
                     elif type(arg) is FloatType:
                         stream.writeFloat(arg)
                     elif type(arg) is ListType:
                         stream.writeQString(str(arg))                        
-                    elif type(arg) is QFile:
+                    elif type(arg) is QFile :
                         arg.open(QIODevice.ReadOnly)
                         fileDatas = QByteArray(arg.readAll())
                         stream.writeInt32(fileDatas.size())
@@ -717,11 +818,11 @@ AND (-1 = ? OR mapId = ?) \n"
                 self.socket.write(reply)
 
 
-        except:
+        except :
                 self.logger.exception("Something awful happened when sending reply !")  
   
-    def done(self):
-        if self.socket is not None:
+    def done(self) :
+        if self.socket != None :
             #self.parent.addSocketToDelete(self.socket)
             self.socket.readyRead.disconnect(self.readDatas)
             self.socket.disconnected.disconnect(self.disconnection)

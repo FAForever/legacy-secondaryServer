@@ -1,4 +1,23 @@
-"""
+#-------------------------------------------------------------------------------
+# Copyright (c) 2014 Gael Honorez.
+# All rights reserved. This program and the accompanying materials
+# are made available under the terms of the GNU Public License v3.0
+# which accompanies this distribution, and is available at
+# http://www.gnu.org/licenses/gpl.html
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#-------------------------------------------------------------------------------
+
+
+'''
 Format of command stream:
 //
 // repeat {
@@ -45,7 +64,7 @@ enum ECmdStreamOp
 10    CMDST_WarpEntity,
     // EntId - entity
     // VTransform - new transform
-
+    
 11    CMDST_ProcessInfoPair,
     // EntId - entity
     // string - arg1
@@ -132,7 +151,7 @@ enum ECmdStreamOp
 
 
 // Format of STITarget:
-//
+// 
 // uint8 - target type (ESTITargetType)
 // if target type == STITARGET_Entity {
 //   EntId - entity id
@@ -149,9 +168,9 @@ enum ECmdStreamOp
 //   int16 - x
 //   int16 - z
 // }
-"""
+'''
 
-class UNITCOMMAND(object):  # pragma: no cover
+class UNITCOMMAND(object):
     UNITCOMMAND_None = 0
     UNITCOMMAND_Stop = 1
     UNITCOMMAND_Move = 2
@@ -236,14 +255,17 @@ class UNITCOMMAND(object):  # pragma: no cover
 //   EndId - entity id 
 // }'''
 
+
+
+
 import struct
+from replayArmy import *
+from replayArmyContainer import *
+from replayInfos import *
+#from replayOptions import *
+
 import json
-
-from PyQt4 import QtCore
-
-from .ReplayArmy import *
-from .replayArmyContainer import *
-from .replayInfos import *
+from PyQt4 import  QtCore
 
 TYPE_NUMBER = 0
 TYPE_STRING = 1
@@ -253,7 +275,7 @@ TABLE_BEGIN = 4
 TABLE_END = 5
 
 
-class replayParser(object):  # pragma: no cover
+class replayParser(object):
     def __init__(self, replayfile):
 
         replay = open(inFile, "rt")
@@ -272,19 +294,19 @@ class replayParser(object):  # pragma: no cover
 
     def readLine(self, offset):
         line = ''
-        while True:
+        while True :
             
             char = struct.unpack("s", self.bin[offset:offset+1])
-
-            offset += 1
+    
+            offset = offset + 1
             #print char
-            if char[0] == '\r':
+            if char[0] == '\r' :
                 #offset = offset + 2
                 break
-            elif char[0] == '\x00':
+            elif char[0] == '\x00' :
                 #offset = offset + 3
                 break
-            else:
+            else :
                 line = line + char[0]
         return offset, line
     
@@ -323,12 +345,12 @@ class replayParser(object):  # pragma: no cover
     def parseLua(self, offset):
     
         type = struct.unpack("b", self.bin[offset:offset+1])[0]
-        offset += 1
+        offset = offset + 1
         #type = struct.unpack("b", data[offset:offset+1])[0]
         
-        if type == TYPE_NIL:
+        if type == TYPE_NIL :
             return None
-        elif type == TYPE_BOOLEAN:
+        elif type == TYPE_BOOLEAN :
             return self.readBool(offset)
     
         elif type == TYPE_STRING:
@@ -337,62 +359,63 @@ class replayParser(object):  # pragma: no cover
         elif type == TYPE_NUMBER:
             return self.readFloat(offset)
             
-        elif type == TABLE_BEGIN:
+        elif type == TABLE_BEGIN :
             table = []
-            while True:
+            while True :
                 type = self.peekType(self.bin[offset:offset+1])
-                if type == TABLE_END:
+                if type == TABLE_END :
                     break
     
     
                 datasKey = self.parseLua(offset)
                 key = ''
-                if datasKey is not None:
+                if datasKey != None :
                     off, key = datasKey
                     offset = off
     
                 
                 datasValue = self.parseLua(offset)
-                if datasValue is not None:
+                value = ''
+                if datasValue != None :
                     off, value = datasValue
                     offset =  off 
                     pair = (key, value)
                     table.append(pair)
     
-                else:
-                    offset += 1
+                else : 
+                    offset = offset + 1
     
             
             return offset+1, table
         
-        elif type == TABLE_END:
+        elif type == TABLE_END :
             raise Exception("Error: unexpected end-of-table")
     
-        else:
+        else :
             raise Exception("Unknown lua data")
 
     def readHeader(self):
         self.offset, supcomVersion = self.readLine(self.offset)
-        self.offset += 3
+        self.offset = self.offset + 3
   
 
-        if not supcomVersion.startswith("Supreme Commander v1"):
+        if (supcomVersion.startswith("Supreme Commander v1") == False) :
             raise Exception("The file format of this replay is unknown")
 
         self.supcomVersion = supcomVersion
 
         self.offset, replayVersion = self.readLine(self.offset)
-        self.offset += 1
+        self.offset = self.offset + 1
         
 
-        if not replayVersion.startswith("Replay v1.9"):
+        if (replayVersion.startswith("Replay v1.9") == False) :
             raise Exception("The file format of this replay is unknown")
         self.replayVersion = replayVersion
 
 
         self.offset, map = self.readLine(self.offset)
-        print(map)
-        self.offset += 4
+        print map
+        self.offset = self.offset + 4
         
         self.offset, count = self.readInt(self.offset)
         
@@ -400,54 +423,54 @@ class replayParser(object):  # pragma: no cover
         self.offset = self.offset + count
         
         self.offset, count = self.readInt(self.offset)
-        print(count)
+        print count
         
         self.offset, scenario = self.parseLua(self.offset)
         infos = replayInfos()
         
         
         numSource = struct.unpack("b", self.bin[self.offset:self.offset+1])[0]
-        self.offset += 1
+        self.offset = self.offset + 1
         
-        for i in range(numSource):
+        for i in range(numSource) :
             self.offset, name = self.readLine(self.offset)
             self.offset, val = self.readInt(self.offset)
         
         
         cheatsEnabled = struct.unpack("b", self.bin[self.offset:self.offset+1])[0]
-        self.offset += 1
+        self.offset = self.offset + 1
         
         infos.setCheat(cheatsEnabled)
         
         
         numArmies = struct.unpack("b", self.bin[self.offset:self.offset+1])[0]
-        self.offset += 1
+        self.offset = self.offset + 1
         
         armies = replayArmyContainer()
         
-        for i in range(0,numArmies):
+        for i in range(0,numArmies) :
             self.offset, val = self.readInt(self.offset)
         
             self.offset, army = self.parseLua(self.offset)
             
-            newArmy = ReplayArmy()
+            newArmy = replayArmy()
             newArmy.populate(army)
-            if newArmy.is_player():
+            if newArmy.isPlayer() :
                 armies.add(newArmy)
             
             
             b = struct.unpack("b", self.bin[self.offset:self.offset+1])[0]
-            self.offset += 1
-            if b != -1:
+            self.offset = self.offset + 1
+            if b != -1 :
                 #b = struct.unpack("b", self.bin[self.offset:self.offset+1])[0]
-                self.offset += 1
+                self.offset = self.offset + 1 
                 #print b
         
-        for army in armies:
+        for army in armies :
             self.players.append(army)
         
         self.offset, randomSeed = self.readInt(self.offset)
-        print("randomSeed", randomSeed)
+        print "randomSeed", randomSeed
 
 
     def setGameTime(self):
@@ -457,7 +480,7 @@ class replayParser(object):  # pragma: no cover
             offset, message_op = self.readChar(offset)
             offset, message_length = self.readShort(offset)
             if message_op == 0:
-                tick += 1
+                tick = tick+1
         
             #skip all the data we don't need to look at we're just looking for the time in this function.
             offset = offset + message_length - 3 
@@ -477,7 +500,7 @@ class replayParser(object):  # pragma: no cover
             offset, message_op = self.readChar(offset)
             offset, message_length = self.readShort(offset)
             if message_op == 0:
-                tick += 1
+                tick = tick + 1
             elif message_op == 1:
                 _, playerturn = self.readChar(offset)
             elif message_op == 11:
@@ -514,6 +537,7 @@ class replayParser(object):  # pragma: no cover
         playerLastTurn = {}
         lastbeat = 0
         beatChecksum = {}
+        debug = False
         offset = self.offset
         beatDesync = 11450 
         while offset < len(self.bin):
@@ -524,7 +548,7 @@ class replayParser(object):  # pragma: no cover
             if lastbeat == beatDesync or lastbeat == beatDesync-50:
 
                 if message_op != 1 and message_op != 3 and message_op != 12 and message_op != 22: 
-                    print(message_op)
+                    print message_op
                 debug = True
             else:
                 debug = False
@@ -536,7 +560,7 @@ class replayParser(object):  # pragma: no cover
             elif message_op == 1:
                 _, playerturn = self.readChar(offset)
                 if debug:
-                    print("playerTurn", playerturn) 
+                    print "playerTurn", playerturn 
             elif message_op == 3:
                 #print message_length
                 '''CMDST_VerifyChecksum,
@@ -550,9 +574,9 @@ class replayParser(object):  # pragma: no cover
 
                     MD5Digest += (struct.unpack("s", self.bin[fakeoffset:fakeoffset+1])[0]).encode("hex")
                     #MD5Digest =  MD5Digest + struct.unpack("B", self.bin[fakeoffset:fakeoffset+1])[0]
-                    fakeoffset += 1
+                    fakeoffset = fakeoffset + 1  
                 if debug:
-                    print(MD5Digest)
+                    print MD5Digest
                 _, beat = self.readInt(fakeoffset)
                 lastbeat = beat
 
@@ -561,9 +585,9 @@ class replayParser(object):  # pragma: no cover
                 beatChecksum[beat].append(beat)
                 if len(beatChecksum[beat]) == len(self.players):
                     #print "beats", beatChecksum[beat]
-                    if len(set(beatChecksum[beat])) != 1:
+                    if len( set( beatChecksum[beat] ) ) != 1:
                         
-                        print("error on beat", beat, "tick", tick) 
+                        print "error on beat", beat, "tick", tick 
 
                 
             elif message_op == 11:
@@ -573,7 +597,7 @@ class replayParser(object):  # pragma: no cover
                     playerLastTurn[playerturn]=tick
             elif message_op == 12:
                 if debug:
-                    print("CMDST_IssueCommand for player", playerturn) 
+                    print "CMDST_IssueCommand for player", playerturn 
                     
                     fakeoffset = offset
                     fakeoffset, numUnits = self.readInt(fakeoffset)
@@ -588,7 +612,7 @@ class replayParser(object):  # pragma: no cover
                     
                     fakeoffset, STITarget = self.readChar(fakeoffset)
                     
-                    print("command type", commandType)
+                    print "command type", commandType
                     if commandType == 7 or  commandType == 8 or commandType == 27:
                         if STITarget == 0:
                             fakeoffset += 6
@@ -597,8 +621,8 @@ class replayParser(object):  # pragma: no cover
                         unitBluePrint = ""
                         for i in range(7):
                             unitBluePrint =  unitBluePrint + struct.unpack("s", self.bin[fakeoffset:fakeoffset+1])[0]
-                            fakeoffset += 1
-                        print(unitBluePrint)
+                            fakeoffset = fakeoffset + 1
+                        print unitBluePrint
                     
                 
                 if currentAction != tick or currentPlayer != playerturn:
@@ -607,6 +631,38 @@ class replayParser(object):  # pragma: no cover
                     currentPlayer = playerturn
                     playerLastTurn[playerturn]=tick
                     pass
+#                    if commandType == 5 :
+#                        print "UNITCOMMAND_BuildSiloTactical"
+#                    elif commandType == 6:
+#                        print "BuildSiloNuke"
+#                    elif commandType == 7:
+#                        print "BuildFactory"
+#                    elif commandType == 8:
+#                        print "BuildMobile"
+#                    elif commandType == 9:
+#                        print "BuildAssist"
+#                    elif commandType == 15:
+#                        print "Guard"
+#                    elif commandType == 16:
+#                        print "Patrol"
+#                    elif commandType == 19:
+#                        print "Reclaim"
+#                    elif commandType == 20:
+#                        print "Repair"
+#                    elif commandType == 21:
+#                        print "Capture"
+#                    elif commandType == 27:
+#                        print "Upgrade"
+#                    elif commandType == 28:
+#                        print "Script"
+#                    elif commandType == 29:
+#                        print "AssistCommander"
+#                    elif commandType == 32:
+#                        print "Sacrifice"                                                                        
+#                    elif commandType == 33:
+#                        print "Pause"
+#                    elif commandType == 38:
+#                        print "SpecialAction"                                                
                 playerLastTurn[playerturn]=tick
             elif message_op == 13:
                 playerLastTurn[playerturn]=tick                    
@@ -617,10 +673,11 @@ class replayParser(object):  # pragma: no cover
                     playerLastTurn[playerturn]=tick
             elif message_op == 22:
                 
-                fakeoffset, command = self.readLine(offset)
+                fakeoffset = offset
+                fakeoffset, command = self.readLine(offset) 
                 fakeoffset, table = self.parseLua(fakeoffset)
                 if debug:
-                    print(command, table)
+                    print command, table
                 if currentAction != tick or currentPlayer != playerturn:
                     currentAction = tick
                     currentPlayer = playerturn
@@ -644,7 +701,7 @@ class replayParser(object):  # pragma: no cover
             offset, message_op = self.readChar(offset)
             offset, message_length = self.readShort(offset)
             if message_op == 0:
-                tick += 1
+                tick = tick + 1
             elif message_op == 1:
                 _, playerturn = self.readChar(offset)
             elif message_op == 11:
@@ -679,8 +736,8 @@ class replayParser(object):  # pragma: no cover
                         unitBluePrint = ""
                         for i in range(7):
                             unitBluePrint =  unitBluePrint + struct.unpack("s", self.bin[fakeoffset:fakeoffset+1])[0]
-                            fakeoffset += 1
-                        print(unitBluePrint)
+                            fakeoffset = fakeoffset + 1
+                        print unitBluePrint
 
                                 
                         
@@ -710,13 +767,41 @@ inFile = r'c:\Users\nozon\Downloads\1265754.fafreplay'
 
 replay = replayParser(inFile)
 replay.readHeader()
-print("gametime", (float(replay.setGameTime()) /10.0) / 60.0, "minutes")
+print "gametime", (float(replay.setGameTime()) /10.0) / 60.0, "minutes"
 
 lastTurns= replay.setPlayerLastTurn()
-for l in lastTurns:
-    print(replay.players[l], ((lastTurns[l] /10.0) / 60.0), "minutes")
-
+for l in lastTurns :
+    print replay.players[l], ((lastTurns[l] /10.0) / 60.0), "minutes"
+#
+#replay.setBuildOrder()
 replay.setDebugDesync()
+#replay.setBuildOrder() 
+#r
+#
+#                            int message_op = (int)ReplayReader.unsignedInt(inputWord, 0, 1);
+#                            index+=ONEBYTE;
+#                            int message_length = 0;
+#                            inputWord = new byte[2];
+#                            inputWord[0] = thereplay[index];
+#                            inputWord[1] = thereplay[index+1];
+#                            index+=TWOBYTES;
+#                            message_length = (int)ReplayReader.unsignedInt(inputWord, 0, 2);
+#                            if(message_op == 0)
+#                            {
+#                                    tick++;
+#                            }
+#                            index+=message_length-3; //skip all the data we don't need to look at
+#                                                                            //we're just looking for the time in this function.
+#                            inputWord = new byte[1];
+#                    }
+#                    this.GameTime = tick;
+#                    index = csl;
+#                    this.setPlayerLastTurn(thereplay);
+#                    this.setPlayerGameTimes();
+#                }else{
+#                   this.GameTime = 0; 
+#                }
+#        } 
 
     
 

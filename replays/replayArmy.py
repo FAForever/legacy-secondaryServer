@@ -16,30 +16,37 @@
 # GNU General Public License for more details.
 #-------------------------------------------------------------------------------
 
-import bisect
+class replayArmy(object):
 
-class replayArmyContainer(object):
-    def __init__(self):
-        self.__armies = []
-        self.__armyId = {}
+    def __init__(self) :
+
+        self.color = 0
+        self.civilian = False
+        self.faction = 1
+        self.id = ''
+        self.team = 0
+        self.human = True
         
-    def __iter__(self) :
-        for pair in iter(self.__armies) :
-            yield pair[1]
-    
-    def __len__(self) :
-        return len(self.__armies)
-    
-    def clear(self):
-        self.__armies = []
+
+
+    def populate(self, infos):
+        #print infos
+        armyInfo = dict(infos)
+        self.color = armyInfo['PlayerColor']
+        self.civilian = armyInfo['Civilian']
+        self.faction = armyInfo['Faction']
+        self.id = armyInfo['PlayerName']
+        self.team = armyInfo['Team']
+        self.human = armyInfo['Human']
+
         
-    def add(self, army):
-        if id(army) in self.__armyId :
+        
+    def isPlayer(self):
+        
+        if (self.civilian == False and self.human == True) :
+            return True
+        else :
             return False
-        key = self.key(army.id)
-        bisect.insort_left(self.__armies, [key, army])
-        self.__armyId[id(army)] = army
-        return True
-    
-    def key(self, id):
-        return id
+        
+    def __str__(self):
+        return "%s : team (%i)" % (self.id, self.team)
