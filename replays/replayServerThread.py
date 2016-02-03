@@ -25,7 +25,7 @@ from PySide import QtCore, QtGui, QtNetwork, QtSql
 from PySide.QtSql import *
 
 from configobj import ConfigObj
-config = ConfigObj("/etc/faforever/faforever.conf")
+config = ConfigObj("replays.conf")
 
 from time import time as curtime
 from types import *

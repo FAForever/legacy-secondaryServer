@@ -32,9 +32,9 @@ import logging
 from logging import handlers
 
 
-from passwords import DB_SERVER, DB_PORT, DB_LOGIN, DB_PASSWORD, DB_TABLE
+from passwords import DB_SERVER, DB_PORT, DB_LOGIN, DB_PASSWORD
 from configobj import ConfigObj
-config = ConfigObj("/etc/faforever/faforever.conf")
+config = ConfigObj("replays.conf")
 
 
 from replays.replayServer import *
