@@ -32,7 +32,7 @@ import logging
 from logging import handlers
 
 
-from passwords import DB_SERVER, DB_PORT, DB_LOGIN, DB_PASSWORD
+from passwords import DB_SERVER, DB_PORT, DB_LOGIN, DB_PASSWORD, DB_NAME
 from configobj import ConfigObj
 config = ConfigObj("replays.conf")
 
@@ -48,19 +48,18 @@ class start(QObject):
         super(start, self).__init__(parent)
 
         self.rootlogger = logging.getLogger("")
-        self.logHandler = handlers.RotatingFileHandler(config['global']['logpath'] + "replayServer.log", backupCount=15, maxBytes=524288 )
-        self.logFormatter = logging.Formatter('%(asctime)s %(levelname)-8s %(name)-20s %(message)s')
-        self.logHandler.setFormatter( self.logFormatter )
-        self.rootlogger.addHandler( self.logHandler )
-        self.rootlogger.setLevel( eval ("logging." + config['replayServer']['loglevel'] ))
         self.logger = logging.getLogger(__name__)
+        ch = logging.StreamHandler()
+        ch.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        self.rootlogger.addHandler(ch)
+        self.rootlogger.setLevel(logging.DEBUG)
 
 
         self.db= QtSql.QSqlDatabase.addDatabase("QMYSQL")  
         self.db.setHostName(DB_SERVER)  
         self.db.setPort(DB_PORT)
 
-        self.db.setDatabaseName(DB_TABLE)  
+        self.db.setDatabaseName(DB_NAME)  
         self.db.setUserName(DB_LOGIN)  
         self.db.setPassword(DB_PASSWORD)
         
