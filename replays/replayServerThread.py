@@ -25,7 +25,7 @@ from PySide import QtCore, QtGui, QtNetwork, QtSql
 from PySide.QtSql import *
 
 from configobj import ConfigObj
-config = ConfigObj("replays.conf")
+config = ConfigObj("replayserver.conf")
 
 from time import time as curtime
 from types import *
@@ -96,7 +96,7 @@ class replayServerThread(QObject):
         nameField = "%" + search + "%"
         
         query = QSqlQuery(self.parent.db)
-        queryStr = "SELECT `id`,`uid`, `t`.`name`,`version`,`author`,`ui`,`big`,`small`,`date`,`downloads`,`likes`,`played`,`description`,`filename`,`icon` \
+        queryStr = "SELECT `id`,`uid`, `t`.`name`,`version`,`author`,`ui`,`date`,`downloads`,`likes`,`played`,`description`,`filename`,`icon` \
                     FROM     (     SELECT `name`, MAX(`version`) AS max_version \
                                     FROM `table_mod`   \
                                     WHERE (`name` LIKE ? OR `description` REGEXP ? OR `author` LIKE ?)\
@@ -107,9 +107,8 @@ class replayServerThread(QObject):
                     INNER JOIN `table_mod` AS t \
                         ON t.`name`= m.`name` \
                         AND t.`version`= m.max_version;" 
-        self.logger.debug(queryStr)
         if typemod != 2:
-            queryStr = "SELECT `id`,`uid`,`t`.`name`,`version`,`author`,`ui`,`big`,`small`,`date`,`downloads`,`likes`,`played`,`description`,`filename`,`icon` \
+            queryStr = "SELECT `id`,`uid`,`t`.`name`,`version`,`author`,`ui`,`date`,`downloads`,`likes`,`played`,`description`,`filename`,`icon` \
                         FROM     (     SELECT `name`, MAX(`version`) AS max_version \
                                         FROM `table_mod`   \
                                         WHERE (`name` LIKE ? OR `description` REGEXP ? OR `author` LIKE ?) AND `ui` = ? \
@@ -120,6 +119,8 @@ class replayServerThread(QObject):
                         INNER JOIN `table_mod` AS t \
                             ON t.`name`= m.`name` \
                             AND t.`version`= m.max_version;"         
+
+        self.logger.debug(queryStr)
         
         if not query.prepare(queryStr):
             self.logger.debug(query.lastQuery())
@@ -141,27 +142,24 @@ class replayServerThread(QObject):
                 version = int(query.value(3))
                 author = str(query.value(4))
                 isuimod = int(query.value(5))
-                isbigmod = int(query.value(6))
-                issmallmod = int(query.value(7))
-                date = query.value(8).toTime_t()                              
-                downloads = int(query.value(9))
-                likes = int(query.value(10))
-                played = int(query.value(11))
-                description = str(query.value(12))
+                date = query.value(6).toTime_t() 
+                downloads = int(query.value(7))
+                likes = int(query.value(8))
+                played = int(query.value(9))
+                description = str(query.value(10))
                 comments = []
                 bugreports = []
-                link = config['global']['content_url'] + "vault/" + str(query.value(13))
-                icon = str(query.value(14))
+                link = config['global']['content_url'] + "vault/" + str(query.value(11))
+                icon = str(query.value(12))
                 thumbstr = ""
                 if icon != "":
                     thumbstr = config['global']['content_url'] + "vault/mods_thumbs/" + urllib2.quote(icon)
                 
-                modList.append(dict(thumbnail=thumbstr,link=link,bugreports=bugreports,comments=comments,description=description,played=played,likes=likes,downloads=downloads,date=date, uid=uid, name=name, version=version, author=author,ui=isuimod,big=isbigmod,small=issmallmod))
+                modList.append(dict(thumbnail=thumbstr,link=link,bugreports=bugreports,comments=comments,description=description,played=played,likes=likes,downloads=downloads,date=date, uid=uid, name=name, version=version, author=author,ui=isuimod))
 
         out = dict(command="modvault_list_info", modList = modList)
+        self.logger.info("Modvault search returned {} items".format(len(modList)))
         self.sendJSON(out)
-                  
-
 
     def command_coop_stats(self, message):
         missionuid = message["mission"]
@@ -352,7 +350,7 @@ class replayServerThread(QObject):
             name = message['player']
             query = QSqlQuery(self.parent.db)
                 
-            query.prepare("SELECT startTime, mean, deviation FROM `game_player_stats` LEFT JOIN game_stats ON `gameId` = game_stats.id WHERE `playerId` = (SELECT id FROM login WHERE login.login = ?) AND gameType = '0' AND `scoreTime` IS NOT NULL AND startTime > (select date_sub(now(),interval 365 day)) ORDER BY startTime DESC")
+            query.prepare("SELECT startTime, mean, deviation FROM `game_player_stats` LEFT JOIN game_stats ON `gameId` = game_stats.id WHERE `playerId` = (SELECT id FROM login WHERE login.login = ?) AND gameMod = 6 AND `scoreTime` IS NOT NULL AND startTime > (select date_sub(now(),interval 365 day)) ORDER BY startTime DESC")
             query.addBindValue(name)
             query.exec_()
 
@@ -553,13 +551,13 @@ class replayServerThread(QObject):
     def command_list(self, message):
         query = QSqlQuery(self.parent.db)
         query.setForwardOnly(True)
-        query.prepare("SELECT game_stats.id, gameName AS title, map.filename AS map, startTime, EndTime , game_featuredMods.gamemod  \
+        query.prepare("SELECT game_stats.id, gameName AS title, map.filename AS map, startTime, game_featuredMods.gamemod,  \
+                       (select max(scoreTime) from game_player_stats where gameId=game_stats.id) as endTime \
                        FROM game_stats \
                        LEFT JOIN table_map AS map ON game_stats.mapId=map.id \
                        LEFT JOIN game_featuredMods ON game_stats.gameMod = game_featuredMods.id \
-                       LEFT JOIN game_replays ON game_stats.id = game_replays.UID \
-                       WHERE (startTime IS NOT NULL) AND (EndTime IS NOT NULL) AND (EndTime - startTime >= 4*60) \
-                       AND game_replays.UID IS NOT NULL \
+                       WHERE startTime IS NOT NULL \
+                       HAVING endTime IS NOT NULL AND endTime-startTime >= 4*60 \
                        ORDER BY game_stats.id DESC \
                        LIMIT 0, 300")
        
@@ -572,12 +570,13 @@ class replayServerThread(QObject):
                 replay["name"] = query.value(1)
                 replay["map"] = os.path.basename(os.path.splitext(query.value(2))[0])
                 replay["start"] = query.value(3).toTime_t()
-                replay["end"] = query.value(4).toTime_t()
-                replay["duration"] = query.value(4).toTime_t() - query.value(3).toTime_t()
-                replay["mod"] = query.value(5)
+                replay["mod"] = query.value(4)
+                replay["end"] = query.value(5).toTime_t()
+                replay["duration"] = replay["end"] - replay["start"]
                 replays.append(replay)
-
             self.sendJSON(dict(command = "replay_vault", action = "list_recents", replays = replays))
+        else:
+            self.logger.info("No replays")
         
         
         
@@ -601,7 +600,8 @@ class replayServerThread(QObject):
             if query.size() != 0 :
                 query.first()
                 mapUid = int(query.value(0))
-            else :
+            else:
+                self.logger.info("Map not found")
                 return
             
         if mod != "All" :
@@ -611,11 +611,22 @@ class replayServerThread(QObject):
             if query.size() != 0 :
                 query.first()
                 modUid = int(query.value(0))
-            else :
+            else:
+                self.logger.info("Unknown mod")
                 return
 
+#        queryStr = "\
+#SELECT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, (select max(scoreTime) from game_player_stats where gameId=game_stats.id) as endTime \
+#FROM game_stats \
+#INNER JOIN table_map ON table_map.id = game_stats.mapId \
+#INNER JOIN game_player_stats ON game_player_stats.gameId = game_stats.id \
+#INNER JOIN game_featuredMods ON game_featuredMods.id = game_stats.gameMod \
+#WHERE  (-1 = ? OR game_stats.gameMod = ?) \
+#AND (mean - 3*deviation) >= ? \
+#AND (-1 = ? OR mapId = ?) \n"
+
         queryStr = "\
-SELECT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_stats.EndTime, game_featuredMods.gameMod \
+SELECT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, game_stats.endTime \
 FROM game_stats \
 INNER JOIN table_map ON table_map.id = game_stats.mapId \
 INNER JOIN game_player_stats ON game_player_stats.gameId = game_stats.id \
@@ -650,7 +661,7 @@ AND (-1 = ? OR mapId = ?) \n"
         
         if not query.exec_():
             self.logger.debug(query.lastQuery())
-            self.logger.debug(query.lastError())
+            self.logger.debug(query.lastError().databaseText())
             
         if query.size() > 0:
             replays = []
@@ -660,9 +671,9 @@ AND (-1 = ? OR mapId = ?) \n"
                 replay["name"] = query.value(1)
                 replay["map"] = os.path.basename(os.path.splitext(query.value(2))[0])
                 replay["start"] = query.value(3).toTime_t()
-                replay["end"] = query.value(4).toTime_t()
-                replay["duration"] = query.value(4).toTime_t() - query.value(3).toTime_t()
-                replay["mod"] = query.value(5)
+                replay["mod"] = query.value(4)
+                replay["end"] = query.value(5).toTime_t()
+                replay["duration"] = replay["end"] - replay["start"]
                 replays.append(replay)
             self.sendJSON(dict(command = "replay_vault", action = "search_result", replays = replays))
         else:
@@ -682,7 +693,10 @@ AND (-1 = ? OR mapId = ?) \n"
         query.prepare("SELECT login.login, faction, color, team, place, (mean-3*deviation), score, scoreTime \
                         FROM `game_player_stats` \
                         LEFT JOIN login ON login.id = `playerId` \
-                        WHERE `gameId` = ?")
+                        WHERE `gameId` = ? \
+                        AND score IS NOT NULL \
+                        AND mean IS NOT NULL \
+                        AND deviation IS NOT NULL")
         query.addBindValue(uid)
         query.exec_()
         if  query.size() > 0:
@@ -694,13 +708,8 @@ AND (-1 = ? OR mapId = ?) \n"
                 player["color"] = query.value(2)
                 player["team"] = query.value(3)
                 player["place"] = query.value(4)
-                if query.value(5) :
-                    player["rating"] = max(0, int(round((query.value(5))/100.0)*100)) 
-                    
-#                if query.value(6) :
-#                    player["after_rating"] = query.value(6)
-                if query.value(6) :
-                    player["score"] = query.value(6)
+                player["rating"] = max(0, int(round((query.value(5))/100.0)*100)) 
+                player["score"] = query.value(6)
     #                    if query.value(8) :
     #                        player["scoreTime"] = query.value(8)
                 players.append(player)
