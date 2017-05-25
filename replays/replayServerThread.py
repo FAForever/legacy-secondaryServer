@@ -551,8 +551,7 @@ class replayServerThread(QObject):
     def command_list(self, message):
         query = QSqlQuery(self.parent.db)
         query.setForwardOnly(True)
-        query.prepare("SELECT game_stats.id, gameName AS title, map.filename AS map, startTime, game_featuredMods.gamemod,  \
-                       (select max(scoreTime) from game_player_stats where gameId=game_stats.id) as endTime \
+        query.prepare("SELECT game_stats.id, gameName AS title, map.filename AS map, startTime, game_featuredMods.gamemod, endTime \
                        FROM game_stats \
                        LEFT JOIN table_map AS map ON game_stats.mapId=map.id \
                        LEFT JOIN game_featuredMods ON game_stats.gameMod = game_featuredMods.id \
@@ -581,29 +580,41 @@ class replayServerThread(QObject):
         
         
     def command_search(self, message):
+        self.logger.debug("command_search with args: %s" % message)
+
         mod     = message["mod"]
         mapname = message["map"]
         player  = message["player"]
         rating  = message.get("rating", 0)
 
         modUid = -1
-        mapUid = -1
-        
+
         query = QSqlQuery(self.parent.db)
         query.setForwardOnly(True)
 
+
         if mapname != "" :
-            query.prepare("SELECT id FROM `table_map` WHERE LOWER( `name` ) REGEXP ? LIMIT 1")
+            skip_map_search = 0
+            mapUidList = ''
+            query.prepare("SELECT id FROM `table_map` WHERE LOWER( `name` ) REGEXP ?")
             mapname = "^" + mapname.lower().replace("*", ".*") +"$"
             query.addBindValue(mapname)
             query.exec_()
             if query.size() != 0 :
-                query.first()
-                mapUid = int(query.value(0))
+                while query.next():
+                    if mapUidList == '':
+                        mapUidList = str(query.value(0))
+                    else:
+                        mapUidList += ","+str(query.value(0))
+
+                self.logger.info("Found maps: %s", mapUidList)
             else:
                 self.logger.info("Map not found")
                 return
-            
+        else:
+            skip_map_search = 1
+            mapUidList = -1
+
         if mod != "All" :
             query.prepare("SELECT id FROM `game_featuredMods` WHERE gamemod = ? LIMIT 1")
             query.addBindValue(mod)
@@ -615,25 +626,25 @@ class replayServerThread(QObject):
                 self.logger.info("Unknown mod")
                 return
 
-#        queryStr = "\
-#SELECT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, (select max(scoreTime) from game_player_stats where gameId=game_stats.id) as endTime \
-#FROM game_stats \
-#INNER JOIN table_map ON table_map.id = game_stats.mapId \
-#INNER JOIN game_player_stats ON game_player_stats.gameId = game_stats.id \
-#INNER JOIN game_featuredMods ON game_featuredMods.id = game_stats.gameMod \
-#WHERE  (-1 = ? OR game_stats.gameMod = ?) \
-#AND (mean - 3*deviation) >= ? \
-#AND (-1 = ? OR mapId = ?) \n"
+            #        queryStr = "\
+            #SELECT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, (select max(scoreTime) from game_player_stats where gameId=game_stats.id) as endTime \
+            #FROM game_stats \
+            #INNER JOIN table_map ON table_map.id = game_stats.mapId \
+            #INNER JOIN game_player_stats ON game_player_stats.gameId = game_stats.id \
+            #INNER JOIN game_featuredMods ON game_featuredMods.id = game_stats.gameMod \
+            #WHERE  (-1 = ? OR game_stats.gameMod = ?) \
+            #AND (mean - 3*deviation) >= ? \
+            #AND (-1 = ? OR mapId = ?) \n"
 
         queryStr = "\
-SELECT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, game_stats.endTime \
+SELECT DISTINCT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, game_stats.endTime \
 FROM game_stats \
 INNER JOIN table_map ON table_map.id = game_stats.mapId \
 INNER JOIN game_player_stats ON game_player_stats.gameId = game_stats.id \
 INNER JOIN game_featuredMods ON game_featuredMods.id = game_stats.gameMod \
 WHERE  (-1 = ? OR game_stats.gameMod = ?) \
 AND (mean - 3*deviation) >= ? \
-AND (-1 = ? OR mapId = ?) \n"
+AND (? OR mapId IN ("+str(mapUidList)+")) \n"
 
         if player != "" :
             query.prepare("SELECT id from login where LOWER(login) REGEXP ?")
@@ -656,13 +667,15 @@ AND (-1 = ? OR mapId = ?) \n"
         query.addBindValue(modUid)
         query.addBindValue(modUid)
         query.addBindValue(rating)
-        query.addBindValue(mapUid)
-        query.addBindValue(mapUid)
-        
+        query.addBindValue(skip_map_search)
+
         if not query.exec_():
             self.logger.debug(query.lastQuery())
             self.logger.debug(query.lastError().databaseText())
-            
+        else:
+            self.logger.debug("query: %s", query.lastQuery())
+            self.logger.debug("result count: %s", query.size())
+
         if query.size() > 0:
             replays = []
             while query.next() :
