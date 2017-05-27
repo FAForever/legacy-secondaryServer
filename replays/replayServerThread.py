@@ -648,7 +648,8 @@ AND (? OR mapId IN ("+str(mapUidList)+")) \n"
 
         if player != "" :
             query.prepare("SELECT id from login where LOWER(login) REGEXP ?")
-            query.addBindValue(player.lower())
+            playername = "^" + player.lower().replace("*", ".*") +"$"
+            query.addBindValue(playername)
             query.exec_()
             if query.size() > 1 :
                 players = []
