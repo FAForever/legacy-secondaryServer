@@ -637,7 +637,7 @@ class replayServerThread(QObject):
             #AND (-1 = ? OR mapId = ?) \n"
 
         queryStr = "\
-SELECT DISTINCT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, game_stats.endTime \
+SELECT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, game_stats.endTime \
 FROM game_stats \
 INNER JOIN table_map ON table_map.id = game_stats.mapId \
 INNER JOIN game_player_stats ON game_player_stats.gameId = game_stats.id \
