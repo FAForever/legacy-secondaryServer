@@ -555,8 +555,7 @@ class replayServerThread(QObject):
                        FROM game_stats \
                        LEFT JOIN table_map AS map ON game_stats.mapId=map.id \
                        LEFT JOIN game_featuredMods ON game_stats.gameMod = game_featuredMods.id \
-                       WHERE startTime IS NOT NULL \
-                       HAVING endTime IS NOT NULL AND endTime-startTime >= 4*60 \
+                       WHERE startTime IS NOT NULL AND endTime IS NOT NULL AND endTime-startTime >= 4*60 \
                        ORDER BY game_stats.id DESC \
                        LIMIT 0, 300")
        
