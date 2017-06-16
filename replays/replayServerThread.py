@@ -581,6 +581,8 @@ class replayServerThread(QObject):
     def command_search(self, message):
         self.logger.debug("command_search with args: %s" % message)
 
+        start_time = time.time()
+
         mod     = message["mod"]
         mapname = message["map"]
         player  = message["player"]
@@ -625,15 +627,15 @@ class replayServerThread(QObject):
                 self.logger.info("Unknown mod")
                 return
 
-            #        queryStr = "\
-            #SELECT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, (select max(scoreTime) from game_player_stats where gameId=game_stats.id) as endTime \
-            #FROM game_stats \
-            #INNER JOIN table_map ON table_map.id = game_stats.mapId \
-            #INNER JOIN game_player_stats ON game_player_stats.gameId = game_stats.id \
-            #INNER JOIN game_featuredMods ON game_featuredMods.id = game_stats.gameMod \
-            #WHERE  (-1 = ? OR game_stats.gameMod = ?) \
-            #AND (mean - 3*deviation) >= ? \
-            #AND (-1 = ? OR mapId = ?) \n"
+                #        queryStr = "\
+                #SELECT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, (select max(scoreTime) from game_player_stats where gameId=game_stats.id) as endTime \
+                #FROM game_stats \
+                #INNER JOIN table_map ON table_map.id = game_stats.mapId \
+                #INNER JOIN game_player_stats ON game_player_stats.gameId = game_stats.id \
+                #INNER JOIN game_featuredMods ON game_featuredMods.id = game_stats.gameMod \
+                #WHERE  (-1 = ? OR game_stats.gameMod = ?) \
+                #AND (mean - 3*deviation) >= ? \
+                #AND (-1 = ? OR mapId = ?) \n"
 
         queryStr = "\
 SELECT game_stats.id, game_stats.gameName, table_map.filename, game_stats.startTime, game_featuredMods.gameMod, game_stats.endTime \
@@ -673,8 +675,14 @@ AND (? OR mapId IN ("+str(mapUidList)+")) \n"
             self.logger.debug(query.lastQuery())
             self.logger.debug(query.lastError().databaseText())
         else:
+            execution_time = time.time() - start_time
+
+            if execution_time > 30:
+                self.logger.warning("replay search was very slow: %s", execution_time)
+
+            self.logger.debug("result count: %s, execution time: %s", query.size(), execution_time)
             self.logger.debug("query: %s", query.lastQuery())
-            self.logger.debug("result count: %s", query.size())
+
 
         if query.size() > 0:
             replays = []
@@ -695,9 +703,8 @@ AND (? OR mapId IN ("+str(mapUidList)+")) \n"
             self.logger.debug(query.lastQuery())
             self.sendJSON(dict(command = "replay_vault", action = "search_result", replays = []))
 
-                    
-        
-                
+
+
     
     def command_info_replay(self, message):
         uid = message["uid"]
